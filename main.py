@@ -1,34 +1,42 @@
-from fastapi import FastAPI, Header, HTTPException
+# ==========================================
+# AGENTIC HONEYPOT API (FINAL – GUVI SAFE)
+# ==========================================
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+import os
 import re
 import requests
+from dotenv import load_dotenv
 
-# ==============================
-# CONFIG
-# ==============================
-import os
+# ==========================================
+# LOAD ENV
+# ==========================================
+load_dotenv()
 
-API_KEY = os.getenv("HONEYPOT_API_KEY", "dev-secret-key")
+API_KEY = os.getenv("HONEYPOT_API_KEY")  # ✅ secure (Render env)
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# ==============================
+# ==========================================
 # APP INIT
-# ==============================
+# ==========================================
 app = FastAPI(title="Agentic Honeypot API")
 
-# ==============================
-# MEMORY STORE (In-Memory)
-# ==============================
+# ==========================================
+# MEMORY STORE
+# ==========================================
 sessions = {}
 
-# ==============================
-# SCHEMA
-# ==============================
+# ==========================================
+# SCHEMAS (optional only)
+# ==========================================
 class Message(BaseModel):
     sender: str
     text: str
-    timestamp: str
+    timestamp: Optional[str] = ""
+
 
 class RequestBody(BaseModel):
     sessionId: str
@@ -36,34 +44,36 @@ class RequestBody(BaseModel):
     conversationHistory: Optional[List[Message]] = []
     metadata: Optional[Dict] = {}
 
-# ==============================
+
+# ==========================================
 # AUTH
-# ==============================
-def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != API_KEY:
+# ==========================================
+def verify_api_key(x_api_key: str):
+    if not API_KEY or x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-# ==============================
+
+# ==========================================
 # SCAM DETECTOR
-# ==============================
+# ==========================================
 SCAM_KEYWORDS = [
     "account blocked", "verify", "urgent", "upi",
     "bank", "otp", "suspended", "click", "link"
 ]
 
+
 def detect_scam(text: str) -> bool:
     text = text.lower()
     return any(k in text for k in SCAM_KEYWORDS)
 
-# ==============================
-# INTELLIGENCE EXTRACTION
-# ==============================
+
+# ==========================================
+# INTEL EXTRACTION
+# ==========================================
 def extract_intel(text: str, intel: dict):
     text_low = text.lower()
 
-    if "upi" in text_low:
-        intel["upiIds"].extend(re.findall(r"\w+@\w+", text))
-
+    intel["upiIds"].extend(re.findall(r"\w+@\w+", text))
     intel["phishingLinks"].extend(re.findall(r"http[s]?://\S+", text))
     intel["phoneNumbers"].extend(re.findall(r"\+91\d{10}", text))
 
@@ -73,9 +83,10 @@ def extract_intel(text: str, intel: dict):
 
     return intel
 
-# ==============================
-# AGENT (Human-like replies)
-# ==============================
+
+# ==========================================
+# AGENT REPLY
+# ==========================================
 def agent_reply(last_text: str):
     last_text = last_text.lower()
 
@@ -90,9 +101,10 @@ def agent_reply(last_text: str):
 
     return "Sorry, I didn’t understand properly. Can you explain again?"
 
-# ==============================
+
+# ==========================================
 # FINAL CALLBACK
-# ==============================
+# ==========================================
 def send_final_callback(session_id, session):
     payload = {
         "sessionId": session_id,
@@ -104,16 +116,43 @@ def send_final_callback(session_id, session):
 
     try:
         requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
-        print("✅ FINAL CALLBACK SENT TO GUVI")
+        print("✅ FINAL CALLBACK SENT")
     except Exception as e:
         print("❌ Callback failed:", e)
 
-# ==============================
-# MAIN ENDPOINT
-# ==============================
+
+# ==========================================
+# MAIN ENDPOINT (IMPORTANT FIX HERE)
+# ==========================================
 @app.post("/honeypot")
-def honeypot(body: RequestBody, x_api_key: str = Header(...)):
+async def honeypot(
+    request: Request,
+    x_api_key: str = Header(...)
+):
+    """
+    ✅ Works with:
+       - empty body (GUVI tester)
+       - real body (actual honeypot usage)
+    """
+
     verify_api_key(x_api_key)
+
+    # Try reading JSON safely
+    try:
+        data = await request.json()
+    except:
+        data = {}
+
+    # --------------------------------------
+    # CASE 1: Tester (no body)
+    # --------------------------------------
+    if not data:
+        return {"status": "alive"}
+
+    # --------------------------------------
+    # CASE 2: Real honeypot request
+    # --------------------------------------
+    body = RequestBody(**data)
 
     session = sessions.setdefault(body.sessionId, {
         "messages": [],
@@ -127,16 +166,11 @@ def honeypot(body: RequestBody, x_api_key: str = Header(...)):
         "scamConfirmed": False
     })
 
-    # Save incoming message
     session["messages"].append({
         "sender": body.message.sender,
         "text": body.message.text
-        
     })
-    print("📩 Total messages so far:", len(session["messages"]))
 
-
-    # Detect scam
     is_scam = detect_scam(body.message.text)
 
     if is_scam:
@@ -149,57 +183,22 @@ def honeypot(body: RequestBody, x_api_key: str = Header(...)):
         reply = agent_reply(body.message.text)
 
         session["messages"].append({
-            "sender": "user",
+            "sender": "agent",
             "text": reply
         })
 
-        # FINAL CALLBACK after enough engagement
-        print("🔥 Trigger check:", len(session["messages"]))
-        
-
-        
         if len(session["messages"]) >= 10 and not session.get("finalSent"):
             send_final_callback(body.sessionId, session)
             session["finalSent"] = True
 
+        return {"status": "success", "reply": reply}
 
-        return {
-            "status": "success",
-            "reply": reply
-        }
+    return {"status": "ignored", "reply": "Okay"}
 
-    return {
-        "status": "ignored",
-        "reply": "Okay"
-    }
-from fastapi.responses import HTMLResponse
 
+# ==========================================
+# ROOT PAGE
+# ==========================================
 @app.get("/")
 def root():
-    return HTMLResponse("""
-    <html>
-        <head>
-            <title>Agentic Honeypot API</title>
-        </head>
-        <center>
-        <body style="font-family: Arial; padding: 40px;">
-            <h1>🕵️ Agentic Honeypot API</h1>
-            <p>This is a backend API service for scam detection and intelligence extraction.</p>
-
-            <h3>Usage</h3>
-            <center>
-            <ul style="list-style-type: none; padding: 0;">
-                <li><b>Endpoint:</b> <code>/honeypot</code></li>
-                <li><b>Method:</b> POST</li>
-                <li><b>Authentication:</b> x-api-key header</li>
-                <li><b>Content-Type:</b> application/json</li>
-            </ul>
-            </center>
-
-            <p>This service is designed for machine-to-machine communication and does not provide a user interface.</p>
-            <p><b>Thank you for using the Agentic Honeypot API!</b></p> 
-            </center>           
-        </body>
-    </html>
-    """)
-
+    return HTMLResponse("<h2>🕵️ Agentic Honeypot API is running</h2>")
