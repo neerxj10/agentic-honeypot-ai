@@ -1,49 +1,26 @@
 # ==========================================
-# AGENTIC HONEYPOT API (FINAL – GUVI SAFE)
+# AGENTIC HONEYPOT API (GUVI + RENDER SAFE)
 # ==========================================
 
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from typing import List, Optional, Dict
 import os
 import re
 import requests
-from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 # ==========================================
-# LOAD ENV
+# ENV (Render provides automatically)
 # ==========================================
-load_dotenv()
+API_KEY = os.getenv("HONEYPOT_API_KEY")
 
-API_KEY = os.getenv("HONEYPOT_API_KEY")  # ✅ secure (Render env)
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# ==========================================
-# APP INIT
-# ==========================================
 app = FastAPI(title="Agentic Honeypot API")
 
 # ==========================================
 # MEMORY STORE
 # ==========================================
 sessions = {}
-
-# ==========================================
-# SCHEMAS (optional only)
-# ==========================================
-class Message(BaseModel):
-    sender: str
-    text: str
-    timestamp: Optional[str] = ""
-
-
-class RequestBody(BaseModel):
-    sessionId: str
-    message: Message
-    conversationHistory: Optional[List[Message]] = []
-    metadata: Optional[Dict] = {}
-
 
 # ==========================================
 # AUTH
@@ -62,7 +39,7 @@ SCAM_KEYWORDS = [
 ]
 
 
-def detect_scam(text: str) -> bool:
+def detect_scam(text: str):
     text = text.lower()
     return any(k in text for k in SCAM_KEYWORDS)
 
@@ -70,12 +47,12 @@ def detect_scam(text: str) -> bool:
 # ==========================================
 # INTEL EXTRACTION
 # ==========================================
-def extract_intel(text: str, intel: dict):
+def extract_intel(text, intel):
     text_low = text.lower()
 
-    intel["upiIds"].extend(re.findall(r"\w+@\w+", text))
-    intel["phishingLinks"].extend(re.findall(r"http[s]?://\S+", text))
-    intel["phoneNumbers"].extend(re.findall(r"\+91\d{10}", text))
+    intel["upiIds"] += re.findall(r"\w+@\w+", text)
+    intel["phishingLinks"] += re.findall(r"http[s]?://\S+", text)
+    intel["phoneNumbers"] += re.findall(r"\+91\d{10}", text)
 
     for k in SCAM_KEYWORDS:
         if k in text_low and k not in intel["suspiciousKeywords"]:
@@ -87,109 +64,90 @@ def extract_intel(text: str, intel: dict):
 # ==========================================
 # AGENT REPLY
 # ==========================================
-def agent_reply(last_text: str):
-    last_text = last_text.lower()
+def agent_reply(text):
+    text = text.lower()
 
-    if "upi" in last_text:
+    if "upi" in text:
         return "I’m not very good with UPI, can you guide me step by step?"
-
-    if "account" in last_text:
+    if "account" in text:
         return "Why is my account being blocked suddenly?"
+    if "link" in text:
+        return "Is this an official bank link? I’m scared to click."
 
-    if "link" in last_text:
-        return "Is this an official bank link? I’m a bit scared to click."
-
-    return "Sorry, I didn’t understand properly. Can you explain again?"
+    return "Can you explain again?"
 
 
 # ==========================================
-# FINAL CALLBACK
+# CALLBACK
 # ==========================================
 def send_final_callback(session_id, session):
     payload = {
         "sessionId": session_id,
         "scamDetected": True,
         "totalMessagesExchanged": len(session["messages"]),
-        "extractedIntelligence": session["intelligence"],
-        "agentNotes": "Used urgency and UPI redirection tactics"
+        "extractedIntelligence": session["intel"],
+        "agentNotes": "Honeypot triggered"
     }
 
     try:
         requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
-        print("✅ FINAL CALLBACK SENT")
-    except Exception as e:
-        print("❌ Callback failed:", e)
+        print("Callback sent")
+    except:
+        pass
 
 
 # ==========================================
-# MAIN ENDPOINT (IMPORTANT FIX HERE)
+# MAIN ENDPOINT (GUVI SAFE)
 # ==========================================
 @app.post("/honeypot")
-async def honeypot(
-    request: Request,
-    x_api_key: str = Header(...)
-):
-    """
-    ✅ Works with:
-       - empty body (GUVI tester)
-       - real body (actual honeypot usage)
-    """
+async def honeypot(request: Request, x_api_key: str = Header(...)):
 
+    # ✅ header auth only
     verify_api_key(x_api_key)
 
-    # Try reading JSON safely
+    # ✅ SAFE body read (no crash if empty)
     try:
         data = await request.json()
     except:
         data = {}
 
-    # --------------------------------------
-    # CASE 1: Tester (no body)
-    # --------------------------------------
+    # ----------------------------------
+    # TESTER MODE (empty body)
+    # ----------------------------------
     if not data:
-        return {"status": "alive"}
+        return {"status": "alive"}   # must return 200
 
-    # --------------------------------------
-    # CASE 2: Real honeypot request
-    # --------------------------------------
-    body = RequestBody(**data)
 
-    session = sessions.setdefault(body.sessionId, {
+    # ----------------------------------
+    # REAL HONEYPOT MODE
+    # ----------------------------------
+    session_id = data.get("sessionId", "default")
+    message = data.get("message", {}).get("text", "")
+    sender = data.get("message", {}).get("sender", "user")
+
+    session = sessions.setdefault(session_id, {
         "messages": [],
-        "intelligence": {
+        "intel": {
             "bankAccounts": [],
             "upiIds": [],
             "phishingLinks": [],
             "phoneNumbers": [],
             "suspiciousKeywords": []
-        },
-        "scamConfirmed": False
+        }
     })
 
-    session["messages"].append({
-        "sender": body.message.sender,
-        "text": body.message.text
-    })
+    session["messages"].append({"sender": sender, "text": message})
 
-    is_scam = detect_scam(body.message.text)
+    if detect_scam(message):
 
-    if is_scam:
-        session["scamConfirmed"] = True
-        session["intelligence"] = extract_intel(
-            body.message.text,
-            session["intelligence"]
-        )
+        session["intel"] = extract_intel(message, session["intel"])
 
-        reply = agent_reply(body.message.text)
+        reply = agent_reply(message)
 
-        session["messages"].append({
-            "sender": "agent",
-            "text": reply
-        })
+        session["messages"].append({"sender": "agent", "text": reply})
 
-        if len(session["messages"]) >= 10 and not session.get("finalSent"):
-            send_final_callback(body.sessionId, session)
-            session["finalSent"] = True
+        if len(session["messages"]) >= 10:
+            send_final_callback(session_id, session)
 
         return {"status": "success", "reply": reply}
 
@@ -197,8 +155,8 @@ async def honeypot(
 
 
 # ==========================================
-# ROOT PAGE
+# ROOT
 # ==========================================
 @app.get("/")
 def root():
-    return HTMLResponse("<h2>🕵️ Agentic Honeypot API is running</h2>")
+    return HTMLResponse("<h2>🕵️ Honeypot running</h2>")
