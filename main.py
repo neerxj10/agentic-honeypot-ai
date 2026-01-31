@@ -1,17 +1,24 @@
 # ==========================================
-# AGENTIC HONEYPOT API (GUVI + RENDER SAFE)
+# AGENTIC HONEYPOT API (FINAL - GUVI + RENDER SAFE)
 # ==========================================
 
 import os
 import re
 import requests
+from collections import defaultdict
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 # ==========================================
-# ENV (Render provides automatically)
+# ENV (SECURE)
 # ==========================================
 API_KEY = os.getenv("HONEYPOT_API_KEY")
+
+# Fail fast if ENV missing (prevents ACCESS_ERROR confusion)
+if not API_KEY:
+    raise RuntimeError(
+        "❌ HONEYPOT_API_KEY not set. Add it in Render → Environment Variables"
+    )
 
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
@@ -25,13 +32,16 @@ sessions = {}
 # ==========================================
 # AUTH
 # ==========================================
-def verify_api_key(x_api_key: str):
-    if not API_KEY or x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+def verify_api_key(x_api_key: str | None):
+    if x_api_key is None:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    if x_api_key.strip() != API_KEY.strip():
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 # ==========================================
-# SCAM DETECTOR
+# SCAM KEYWORDS
 # ==========================================
 SCAM_KEYWORDS = [
     "account blocked", "verify", "urgent", "upi",
@@ -47,68 +57,78 @@ def detect_scam(text: str):
 # ==========================================
 # INTEL EXTRACTION
 # ==========================================
-def extract_intel(text, intel):
+def extract_intel(text: str, intel: dict):
+
     text_low = text.lower()
 
     intel["upiIds"] += re.findall(r"\b[\w.-]+@[\w.-]+\b", text)
 
     intel["phishingLinks"] += re.findall(r"http[s]?://\S+|www\.\S+", text)
 
-    intel["phoneNumbers"] += re.findall(r"(?:\+91[- ]?)?[6-9]\d{4}[- ]?\d{5}", text)
+    intel["phoneNumbers"] += re.findall(
+        r"(?:\+91[- ]?)?[6-9]\d{4}[- ]?\d{5}", text
+    )
 
     intel["bankAccounts"] += re.findall(r"\b\d{12,18}\b", text)
 
-    intel["amounts"] += re.findall(r"(?:₹|rs\.?|inr)?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?", text_low)
+    intel["amounts"] += re.findall(
+        r"(?:₹|rs\.?|inr)?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?",
+        text_low
+    )
 
-    
-    intel["otpCodes"] += re.findall(r"\b\d{4,6}\b(?=\s*(?:otp|code|pin))", text_low)
+    intel["otpCodes"] += re.findall(
+        r"\b\d{4,6}\b(?=\s*(?:otp|code|pin))",
+        text_low
+    )
 
-    intel["cardNumbers"] += re.findall(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b", text)
+    intel["cardNumbers"] += re.findall(
+        r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b",
+        text
+    )
 
-    intel["ifscCodes"] += re.findall(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text)
+    intel["ifscCodes"] += re.findall(
+        r"\b[A-Z]{4}0[A-Z0-9]{6}\b",
+        text
+    )
 
+    # suspicious keywords
     for k in SCAM_KEYWORDS:
-        if k in text_low and k not in intel["suspiciousKeywords"]:
+        if k in text_low:
             intel["suspiciousKeywords"].append(k)
 
-    # dedupe lists
+    # dedupe all lists
     for k in intel:
-        if isinstance(intel[k], list):
-            intel[k] = list(set(intel[k]))
+        intel[k] = list(set(intel[k]))
 
     return intel
 
 
 # ==========================================
-# AGENT REPLY
+# AGENT REPLY LOGIC
 # ==========================================
 def agent_reply(text):
+
     text = text.lower()
 
     if "upi" in text:
         return "I’m not very good with UPI, can you guide me step by step?"
-    if "account" in text:
-        return "Why is my account being blocked suddenly?"
-    if "link" in text:
-        return "Is this an official bank link? I’m scared to click."
     if "otp" in text:
         return "Why do you need my OTP? Is it safe?"
+    if "link" in text:
+        return "Is this an official bank link?"
+    if "account" in text:
+        return "Why is my account being blocked suddenly?"
     if "verify" in text:
         return "What details do I need to verify?"
-    if "urgent" in text:
-        return "Why is this urgent? I need more time."
-    if "suspended" in text:
-        return "How long will my account be suspended?"
-    if "click" in text:
-        return "Can you assure me it’s safe to click the link?"
 
     return "Can you explain again?"
 
 
 # ==========================================
-# CALLBACK
+# CALLBACK TO GUVI
 # ==========================================
 def send_final_callback(session_id, session):
+
     payload = {
         "sessionId": session_id,
         "scamDetected": True,
@@ -119,16 +139,16 @@ def send_final_callback(session_id, session):
 
     try:
         requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
-        print("Callback sent")
+        print("✅ Callback sent")
     except:
-        pass
+        print("⚠ Callback failed")
 
 
 # ==========================================
-# MAIN ENDPOINT (GUVI SAFE)
+# MAIN ENDPOINT (GUVI COMPATIBLE)
 # ==========================================
 @app.post("/honeypot")
-async def honeypot(request: Request, x_api_key: str = Header(...)):
+async def honeypot(request: Request, x_api_key: str = Header(None)):
 
     verify_api_key(x_api_key)
 
@@ -137,7 +157,7 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
     except:
         data = {}
 
-    # tester mode
+    # Tester health check
     if not data:
         return {"status": "alive"}
 
@@ -145,20 +165,10 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
     message = data.get("message", {}).get("text", "")
     sender = data.get("message", {}).get("sender", "user")
 
-    
+    # Create session safely
     session = sessions.setdefault(session_id, {
         "messages": [],
-        "intel": {
-            "bankAccounts": [],
-            "upiIds": [],
-            "phishingLinks": [],
-            "phoneNumbers": [],
-            "amounts": [],
-            "otpCodes": [],
-            "cardNumbers": [],
-            "ifscCodes": [],
-            "suspiciousKeywords": []
-        }
+        "intel": defaultdict(list)
     })
 
     session["messages"].append({"sender": sender, "text": message})
@@ -184,4 +194,4 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
 # ==========================================
 @app.get("/")
 def root():
-    return HTMLResponse("<h2>🕵️ Honeypot running</h2>")
+    return HTMLResponse("<h2>🕵️ Honeypot running securely</h2>")
