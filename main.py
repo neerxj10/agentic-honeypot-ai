@@ -50,13 +50,34 @@ def detect_scam(text: str):
 def extract_intel(text, intel):
     text_low = text.lower()
 
-    intel["upiIds"] += re.findall(r"\w+@\w+", text)
-    intel["phishingLinks"] += re.findall(r"http[s]?://\S+", text)
-    intel["phoneNumbers"] += re.findall(r"\+91\d{10}", text)
+
+    intel["upiIds"] += re.findall(r"\b[\w.-]+@[\w.-]+\b", text)
+
+    intel["phishingLinks"] += re.findall(r"http[s]?://\S+|www\.\S+", text)
+
+    intel["phoneNumbers"] += re.findall(r"(?:\+91[- ]?)?[6-9]\d{4}[- ]?\d{5}", text)
+
+    intel["bankAccounts"] += re.findall(r"\b\d{12,18}\b", text)
+
+    intel["emailAddresses"] += re.findall(r"\b[\w.-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text)
+
+    intel["amounts"] += re.findall(r"(?:₹|rs\.?|inr)?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?", text_low)
+
+    intel["otpCodes"] += re.findall(r"\b\d{4,6}\b(?=\s*(otp|code|pin))", text_low)
+
+    intel["cardNumbers"] += re.findall(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b", text)
+
+    intel["ifscCodes"] += re.findall(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text)
+
 
     for k in SCAM_KEYWORDS:
         if k in text_low and k not in intel["suspiciousKeywords"]:
             intel["suspiciousKeywords"].append(k)
+            
+    for k in intel:
+        if isinstance(intel[k], list):
+           intel[k] = list(set(intel[k]))
+        
 
     return intel
 
