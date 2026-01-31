@@ -73,6 +73,16 @@ def agent_reply(text):
         return "Why is my account being blocked suddenly?"
     if "link" in text:
         return "Is this an official bank link? I’m scared to click."
+    if "otp" in text:
+        return "Why do you need my OTP? Is it safe?"
+    if "verify" in text:
+        return "What details do I need to verify?"
+    if "urgent" in text:
+        return "Why is this urgent? I need more time."
+    if "suspended" in text:
+        return "How long will my account be suspended?"
+    if "click" in text:
+        return "Can you assure me it’s safe to click the link?"
 
     return "Can you explain again?"
 
