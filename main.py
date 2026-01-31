@@ -50,26 +50,13 @@ def detect_scam(text: str):
 def extract_intel(text, intel):
     text_low = text.lower()
 
-
-    intel["upiIds"] += re.findall(r"\b[\w.-]+@[\w.-]+\b", text)
-
-    intel["phishingLinks"] += re.findall(r"http[s]?://\S+|www\.\S+", text)
-
-    intel["phoneNumbers"] += re.findall(r"(?:\+91[- ]?)?[6-9]\d{4}[- ]?\d{5}", text)
-
-    intel["bankAccounts"] += re.findall(r"\b\d{12,18}\b", text)
-
+    intel["upiIds"] += re.findall(r"\w+@\w+", text)
+    intel["phishingLinks"] += re.findall(r"http[s]?://\S+", text)
+    intel["phoneNumbers"] += re.findall(r"\+91\d{10}", text)
 
     for k in SCAM_KEYWORDS:
         if k in text_low and k not in intel["suspiciousKeywords"]:
             intel["suspiciousKeywords"].append(k)
-            
-
-    # dedupe lists
-    for k in intel:
-        if isinstance(intel[k], list):
-           intel[k] = list(set(intel[k]))
-        
 
     return intel
 
@@ -86,16 +73,6 @@ def agent_reply(text):
         return "Why is my account being blocked suddenly?"
     if "link" in text:
         return "Is this an official bank link? I’m scared to click."
-    if "otp" in text:
-        return "Why do you need my OTP? Is it safe?"
-    if "verify" in text:
-        return "What details do I need to verify?"
-    if "urgent" in text:
-        return "Why is this urgent? I need more time."
-    if "suspended" in text:
-        return "How long will my account be suspended?"
-    if "click" in text:
-        return "Can you assure me it’s safe to click the link?"
 
     return "Can you explain again?"
 
@@ -137,11 +114,9 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
     # ----------------------------------
     # TESTER MODE (empty body)
     # ----------------------------------
-    # tester mode
     if not data:
         return {"status": "alive"}   # must return 200
 
-        return {"status": "alive"}
 
     # ----------------------------------
     # REAL HONEYPOT MODE
@@ -150,7 +125,6 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
     message = data.get("message", {}).get("text", "")
     sender = data.get("message", {}).get("sender", "user")
 
-    
     session = sessions.setdefault(session_id, {
         "messages": [],
         "intel": {
