@@ -50,9 +50,13 @@ def detect_scam(text: str):
 def extract_intel(text, intel):
     text_low = text.lower()
 
-    intel["upiIds"] += re.findall(r"\w+@\w+", text)
-    intel["phishingLinks"] += re.findall(r"http[s]?://\S+", text)
-    intel["phoneNumbers"] += re.findall(r"\+91\d{10}", text)
+    intel["upiIds"] += re.findall(r"\b[\w.-]+@[\w.-]+\b", text)
+
+    intel["phishingLinks"] += re.findall(r"http[s]?://\S+|www\.\S+", text)
+
+    intel["phoneNumbers"] += re.findall(r"(?:\+91[- ]?)?[6-9]\d{4}[- ]?\d{5}", text)
+
+    intel["bankAccounts"] += re.findall(r"\b\d{12,18}\b", text)
 
     for k in SCAM_KEYWORDS:
         if k in text_low and k not in intel["suspiciousKeywords"]:
@@ -73,6 +77,22 @@ def agent_reply(text):
         return "Why is my account being blocked suddenly?"
     if "link" in text:
         return "Is this an official bank link? I’m scared to click."
+    if "otp" in text:
+        return "Why do you need my OTP? Isn’t that private?"
+    if "verify" in text:
+        return "What will happen if I don’t verify right now?"
+    if "urgent" in text:
+        return "Why is this urgent? Can it wait?"
+    if "suspended" in text:
+        return "How long will my account be suspended?"
+    if "click" in text:
+        return "I’m not comfortable clicking links from unknown sources."
+    if "bank" in text:
+        return "Can you tell me more about this bank issue?"
+    if "blocked" in text:
+        return "What should I do to unblock my account?"
+    if "suspend" in text:
+        return "Will my account be suspended permanently?"
 
     return "Can you explain again?"
 
@@ -102,10 +122,10 @@ def send_final_callback(session_id, session):
 @app.post("/honeypot")
 async def honeypot(request: Request, x_api_key: str = Header(...)):
 
-    # ✅ header auth only
+    
     verify_api_key(x_api_key)
 
-    # ✅ SAFE body read (no crash if empty)
+    
     try:
         data = await request.json()
     except:
@@ -115,7 +135,7 @@ async def honeypot(request: Request, x_api_key: str = Header(...)):
     # TESTER MODE (empty body)
     # ----------------------------------
     if not data:
-        return {"status": "alive"}   # must return 200
+        return {"status": "alive"}
 
 
     # ----------------------------------
